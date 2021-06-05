@@ -5,6 +5,7 @@ const passport = require('passport')
 const session = require('express-session')
 const passportLocalMongoose = require('passport-local-mongoose')
 const { Strategy, serializeUser } = require("passport")
+const findOrCreate = require('mongoose-findorcreate')
 require('dotenv').config()
 
 const saltRounds = 10
@@ -31,16 +32,39 @@ mongoose.connect(process.env.MONGO_URL, { useNewUrlParser: true, useCreateIndex:
 
 const userSchema = new mongoose.Schema({
   email: String,
-  password: String
+  password: String,
+  googleId:String
 })
 
 userSchema.plugin(passportLocalMongoose)
-
+userSchema.plugin(findOrCreate)
 const User = new mongoose.model("User", userSchema)
 
 passport.use(User.createStrategy())
-passport.serializeUser(User.serializeUser())
-passport.deserializeUser(User.deserializeUser())
+passport.serializeUser((user,done)=>{
+  done(null, user.id)
+})
+passport.deserializeUser((id, done)=> {
+  User.findById(id, (err, user)=> {
+    done(err, user);
+  })
+})
+
+
+var GoogleStrategy = require('passport-google-oauth20').Strategy;
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/oauth/google/secrets"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    console.log(profile)
+    User.findOrCreate({ googleId: profile.id }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
 
 app.get("/", function (req, res) {
   res.render("home")
@@ -54,14 +78,25 @@ app.get("/register", function (req, res) {
   res.render("register")
 })
 
-app.get('/secrets', (req, res) => {
-  req.isAuthenticated() ? res.render("secrets") : res.redirect('/login')
-})
+app.get('/secrets', passport.authenticate('google', { failureRedirect: '/login' }),
+(req, res)=>
+  // Successful authentication, redirect t9 main page.
+  res.render('secrets')
+)
 
 app.get("/logout",(req,res)=>{
   req.logout()
   res.redirect("/")
 })
+
+app.get('/oauth/google/secrets',passport.authenticate('google', { failureRedirect: '/login' }),
+  (req, res)=>
+    // Successful authentication, redirect home.
+    res.render('secrets')
+  )
+//authenticate user with google oauth2.0
+app.get('/auth/google', passport.authenticate("google", {scope:['profile']}))
+    
 
 app.post('/register', (req, res) => {
   User.register({ username: req.body.username }, req.body.password, (err, user) => {
